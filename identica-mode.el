@@ -1,11 +1,10 @@
 ;;; identica-mode.el --- Major mode for Identica
 
-
 ;; Copyright (C) 2008 Gabriel Saldana
 
 ;; Author: Gabriel Saldana <gsaldana@gmail.com>
 ;; Last update: 2009-02-21
-;; Version: 0.6
+;; Version: 0.7
 ;; Keywords: identica web
 ;; URL: http://blog.nethazard.net/identica-mode-for-emacs/
 ;; Contributors:
@@ -64,13 +63,15 @@
 (require 'xml)
 (require 'parse-time)
 
-(defconst identica-mode-version "0.6")
+(defconst identica-mode-version "0.7")
 
-(defgroup identica-mode nil "Customize Identica Mode"
+(defgroup identica-mode nil
+  "Identica Mode for microblogging"
   :tag "Microblogging"
   :link '(url-link http://blog.nethazard.net/identica-mode-for-emacs/)
   :group 'applications
 )
+
 (defun identica-mode-version ()
   "Display a message for identica-mode version."
   (interactive)
@@ -80,10 +81,24 @@
 	(message "%s" version-string)
       version-string)))
 
-(defvar identica-mode-map (make-sparse-keymap))
-
+(defvar identica-mode-map (make-sparse-keymap "Identi.ca"))
+(defvar menu-bar-identica-mode-menu nil)
 (defvar identica-timer nil "Timer object for timeline refreshing will be stored here. DO NOT SET VALUE MANUALLY.")
 (defvar identica-last-timeline-retrieved nil)
+
+;; Menu
+(unless menu-bar-identica-mode-menu
+  (easy-menu-define
+    menu-bar-identica-mode-menu identica-mode-map ""
+    '("Identi.ca"
+      ["Send an update" identica-update-status-interactive t]
+      ["Send a direct message" identica-direct-message-interactive t]
+      ["Re-dent someone's update" identica-redent t]
+      ["--" nil nil]
+      ["Friends timeline" identica-friends-timeline t]
+      ["Public timeline" identica-public-timeline t]
+      ["Replies timeline" identica-replies-timeline t]
+      ["User timeline" identica-user-timeline t])))
 
 (defcustom identica-idle-time 20
   "Idle time"
@@ -96,13 +111,13 @@
   :group 'identica-mode)
 
 (defcustom identica-username nil
-  "Username"
-  :type 'string
+  "Your identi.ca username. If nil, you will be prompted"
+  :type '(choice (const :tag "Ask" nil) (string))
   :group 'identica-mode)
 
 (defcustom identica-password nil
-  "Password"
-  :type 'string
+  "Your identi.ca password. If nil, you will be prompted"
+  :type '(choice (const :tag "Ask" nil) (string))
   :group 'identica-mode)
 
 (defcustom laconica-server "identi.ca"
@@ -116,6 +131,11 @@
   :options '("friends_timeline" "public_timeline" "replies")
   :group 'identica-mode)
 
+(defcustom identica-display-success-messages nil
+  "Display messages when the timeline is successfully retrieved"
+  :type 'boolean
+  :group 'identica-mode)
+
 ;; Initialize with default timeline
 (defvar identica-method identica-default-timeline)
 
@@ -124,6 +144,8 @@
 
 (defvar identica-jojo-mode nil)
 (make-variable-buffer-local 'identica-jojo-mode)
+
+(defvar identica-source "emacs-identicamode")
 
 (defcustom identica-status-format "%i %s,  %@:\n  %t // from %f%L"
   "The format used to display the status updates"
@@ -268,7 +290,6 @@
 (defun identica-global-strftime (fmt string)
   (identica-setftime fmt string t))
 
-
 (defvar identica-debug-mode nil)
 (defvar identica-debug-buffer "*identica-debug*")
 (defun identica-debug-buffer ()
@@ -297,6 +318,7 @@
       (define-key km "\C-c\C-u" 'identica-user-timeline)
       (define-key km "\C-c\C-s" 'identica-update-status-interactive)
       (define-key km "\C-c\C-d" 'identica-direct-message-interactive)
+      (define-key km "\C-c\C-m" 'identica-redent)
       (define-key km "\C-c\C-e" 'identica-erase-old-statuses)
       (define-key km "\C-m" 'identica-enter)
       (define-key km "\C-c\C-l" 'identica-update-lambda)
@@ -372,7 +394,7 @@
       `(ucs-to-char ,num)
     `(decode-char 'ucs ,num)))
 
-(defvar identica-mode-string (concat"Identica mode " identica-method))
+(defvar identica-mode-string (concat "Identica mode " identica-method))
 
 (defun identica-set-mode-string ()
   (setq mode-name (concat "Identica mode " identica-method))
@@ -380,7 +402,7 @@
 (defvar identica-mode-hook nil
   "Identica-mode hook.")
 
-(defun identica-mode ()
+(defun identica-mode-start ()
   "Major mode for Identica
 \\{identica-mode-map}"
   (interactive)
@@ -468,7 +490,8 @@
 	     (debug-print (concat "GET Request\n" request))
 	     request)))
       (error
-       (message "Failure: HTTP GET") nil))))
+       (message "Failure: HTTP GET") nil)))
+  )
 
 (defun identica-http-get-default-sentinel (proc stat &optional suc-msg)
   (let ((header (identica-get-response-header))
@@ -486,7 +509,8 @@
 	     (reverse (identica-xmltree-to-status
 		       body)))
 	    (identica-render-timeline)
-	    (message (if suc-msg suc-msg "Success: Get.")))
+	    (when identica-display-success-messages
+	    (message (if suc-msg suc-msg "Success: Get."))))
 	   (t (message status))))
       (message "Failure: Bad http response.")))
   )
@@ -504,7 +528,7 @@
 	       (save-excursion (beginning-of-line) (point)) (point))
 	      (insert "\n"))
 	    identica-timeline-data)
-      (if identica-image-stack
+      (if (and identica-image-stack window-system)
 	  (clear-image-cache))
       (setq buffer-read-only t)
       (debug-print (current-buffer))
@@ -625,7 +649,8 @@
       (list-push (substring format-str cursor) result)
       (let ((formatted-status (apply 'concat (nreverse result))))
 	(add-text-properties 0 (length formatted-status)
-			     `(username ,(attr 'user-screen-name))
+			     `(username ,(attr 'user-screen-name)
+					text ,(attr 'text))
 			     formatted-status)
 	formatted-status)
       )))
@@ -695,7 +720,8 @@ PARAMETERS is alist of URI parameters. ex) ((\"mode\" . \"view\") (\"page\" . \"
 			     nl)))
 			nl))
 	 (debug-print (concat "POST Request\n" request))
-	 request)))))
+	 request))))
+  )
 
 (defun identica-http-post-default-sentinel (proc stat &optional suc-msg)
 
@@ -707,7 +733,8 @@ PARAMETERS is alist of URI parameters. ex) ((\"mode\" . \"view\") (\"page\" . \"
 	(setq status (match-string-no-properties 1 header))
 	(case-string status
 		     (("200 OK")
-		      (message (if suc-msg suc-msg "Success: Post")))
+		      (when identica-display-success-messages
+		      (message (if suc-msg suc-msg "Success: Post"))))
 		     (t (message status)))
 	)
     (error (message (prin1-to-string err-signal))))
@@ -972,11 +999,11 @@ If STATUS-DATUM is already in DATA-VAR, return nil. If not, return t."
     (if (equal method-class "statuses")
 	(identica-http-post method-class method
 			    `(("status" . ,status)
-			      ("source" . "emacs-identicamode")))
+			      ("source" . ,identica-source)))
       (identica-http-post method-class method
 			  `(("text" . ,status)
 			    ("user" . ,parameters) ;must change this to parse parameters as list
-			    ("source" . "emacs-identicamode"))))
+			    ("source" . ,identica-source))))
 
     t))
 
@@ -1064,7 +1091,7 @@ If STATUS-DATUM is already in DATA-VAR, return nil. If not, return t."
 				)))))
 
   (if identica-icon-mode
-      (if identica-image-stack
+      (if (and identica-image-stack window-system)
 	  (let ((proc
 		 (apply
 		  #'start-process
@@ -1099,7 +1126,10 @@ If STATUS-DATUM is already in DATA-VAR, return nil. If not, return t."
 
 (defun identica-user-timeline ()
   (interactive)
-  (setq identica-method "user_timeline")
+  (setq from_user (read-from-minibuffer "User [Empty for mine]: " nil nil nil nil nil t))
+       (if (null from_user)
+	   (setq identica-method "user_timeline")
+	 (setq identica-method (concat "user_timeline/" from_user)))
   (identica-get-timeline))
 
 (defun identica-current-timeline ()
@@ -1150,6 +1180,14 @@ If STATUS-DATUM is already in DATA-VAR, return nil. If not, return t."
   (let ((uri (get-text-property (point) 'uri)))
     (if uri
 	(browse-url uri))))
+
+(defun identica-redent ()
+  (interactive)
+  (let ((username (get-text-property (point) 'username))
+       (text (get-text-property (point) 'text)))
+    (when username
+       (identica-update-status-from-minibuffer
+        (concat "♻ @" username ": " text)))))
 
 (defun identica-reply-to-user ()
   (interactive)
@@ -1246,7 +1284,7 @@ If STATUS-DATUM is already in DATA-VAR, return nil. If not, return t."
 (defun identica ()
   "Start identica-mode."
   (interactive)
-  (identica-mode))
+  (identica-mode-start))
 
 (provide 'identica-mode)
 ;;; identica.el ends here
