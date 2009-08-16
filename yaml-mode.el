@@ -112,7 +112,7 @@ that key is pressed to begin a block literal."
 (defconst yaml-blank-line-re "^ *$"
   "Regexp matching a line containing only (valid) whitespace.")
 
-(defconst yaml-comment-re "\\(#*.*\\)"
+(defconst yaml-comment-re "\\(#+.*\\)"
   "Regexp matching a line containing a YAML comment or delimiter.")
 
 (defconst yaml-directive-re "^\\(?:--- \\)? *%\\(\\w+\\)"
@@ -218,7 +218,9 @@ that key is pressed to begin a block literal."
   (set (make-local-variable 'font-lock-defaults)
        '(yaml-font-lock-keywords
          nil nil nil nil
-         (font-lock-syntactic-keywords . yaml-font-lock-syntactic-keywords))))
+         (font-lock-syntactic-keywords . yaml-font-lock-syntactic-keywords)))
+  ;; TABs are not allowed in YAML
+  (set (make-local-variable 'indent-tabs-mode) nil))
 
 
 ;; Font-lock support
